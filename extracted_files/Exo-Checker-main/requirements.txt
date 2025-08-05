@@ -1,5 +1,0 @@
-Pillow==11.0.0
-pyTelegramBotAPI
-asyncio
-aiohttp
-python-dotenv
