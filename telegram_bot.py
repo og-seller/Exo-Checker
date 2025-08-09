@@ -17,11 +17,15 @@ from commands import (command_start, command_help, command_login, command_style,
                      command_user, command_logo, command_design, command_title, command_locate, command_livechat,
                      command_activate_code, command_delete_accounts, send_style_message, send_badges_message, 
                      available_styles, avaliable_badges)
+from commands_shop import (command_shop, handle_shop_navigation, command_news, 
+                          handle_news_navigation, command_cosmetics)
 
 import epic_auth
 import cosmetic
 import commands
 import utils
+import xbox_api
+import fortnite_api_wrapper
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -51,7 +55,12 @@ telegram_bot.set_my_commands([
     telebot.types.BotCommand("/locate", "📍 Location by xbox nick."),
     telebot.types.BotCommand("/livechat", "💬 Live chat status."),
     telebot.types.BotCommand("/badges", "🏆 Toggle your owned badges."),
-    telebot.types.BotCommand("/stats", "📊 View your stats.")
+    telebot.types.BotCommand("/stats", "📊 View your stats."),
+    
+    # New Fortnite API commands
+    telebot.types.BotCommand("/shop", "🛍️ View current Fortnite item shop."),
+    telebot.types.BotCommand("/news", "📰 View latest Fortnite news."),
+    telebot.types.BotCommand("/cosmetics", "🔍 Search for Fortnite cosmetics.")
 ])
 
 auth_code = None
@@ -131,6 +140,19 @@ def handle_activate_code(message):
 @telegram_bot.message_handler(commands=['delete_accounts'])
 def handle_delete_accounts(message):
     asyncio.run(command_delete_accounts(telegram_bot, message))
+
+# New Fortnite API command handlers
+@telegram_bot.message_handler(commands=['shop'])
+def handle_shop(message):
+    asyncio.run(command_shop(telegram_bot, message))
+
+@telegram_bot.message_handler(commands=['news'])
+def handle_news(message):
+    asyncio.run(command_news(telegram_bot, message))
+
+@telegram_bot.message_handler(commands=['cosmetics'])
+def handle_cosmetics(message):
+    asyncio.run(command_cosmetics(telegram_bot, message))
 
 @telegram_bot.callback_query_handler(func=lambda call: call.data.startswith("style_") or call.data.startswith("select_"))
 def handle_style_navigation(call):
@@ -295,9 +317,38 @@ def handle_menu_navigation(call):
                 parse_mode="Markdown"
             )
 
+@telegram_bot.callback_query_handler(func=lambda call: call.data.startswith("shop_") and not call.data == "shop_back")
+def handle_shop_callbacks(call):
+    """Handle shop-related callbacks"""
+    asyncio.run(handle_shop_navigation(telegram_bot, call))
+
+@telegram_bot.callback_query_handler(func=lambda call: call.data.startswith("news_") and not call.data == "news_back")
+def handle_news_callbacks(call):
+    """Handle news-related callbacks"""
+    asyncio.run(handle_news_navigation(telegram_bot, call))
+
+@telegram_bot.callback_query_handler(func=lambda call: call.data == "shop_back")
+def handle_shop_back(call):
+    """Handle back button from shop details"""
+    asyncio.run(command_shop(telegram_bot, call.message))
+
+@telegram_bot.callback_query_handler(func=lambda call: call.data == "news_back")
+def handle_news_back(call):
+    """Handle back button from news details"""
+    asyncio.run(command_news(telegram_bot, call.message))
+
 @telegram_bot.callback_query_handler(func=lambda call: call.data.startswith("welcome_"))
 def handle_welcome_navigation(call):
     data = call.data
+    
+    # Ensure user is registered before handling any welcome navigation
+    user = ExoUser(call.from_user.id, call.from_user.username)
+    user_data = user.load_data()
+    
+    # Auto-register user if not registered
+    if not user_data:
+        print(f"Auto-registering user: {call.from_user.id}")
+        user.register()
     
     if data == "welcome_connect":
         # Redirect to login command
@@ -306,11 +357,35 @@ def handle_welcome_navigation(call):
         # Show saved accounts (previously checked accounts)
         show_saved_accounts(call)
     elif data == "welcome_shop":
-        # Show items shop
-        show_items_shop(call)
+        # Show items shop using the new Fortnite API integration
+        asyncio.run(command_shop(telegram_bot, call.message))
     elif data == "welcome_settings":
-        # Redirect to menu command
-        asyncio.run(command_menu(telegram_bot, call.message))
+        # Show settings menu
+        markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Checker Style 🎨", callback_data="settings_style"),
+                InlineKeyboardButton("Badges 🏆", callback_data="settings_badges")
+            ],
+            [
+                InlineKeyboardButton("Custom Design 🖌️", callback_data="settings_design"),
+                InlineKeyboardButton("User Info 👤", callback_data="settings_user")
+            ],
+            [
+                InlineKeyboardButton("Delete Accounts 🗑️", callback_data="settings_delete"),
+                InlineKeyboardButton("Clear Friends 🧹", callback_data="settings_clear")
+            ],
+            [
+                InlineKeyboardButton("Back to Menu 🔙", callback_data="back_to_menu")
+            ]
+        ])
+        
+        telegram_bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="⚙️ **Settings Menu**\n\nCustomize your Exo-Checker experience with the options below:",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
 
 def show_saved_accounts(call):
     """Show saved accounts with credentials for the specific user"""
@@ -319,19 +394,27 @@ def show_saved_accounts(call):
     user_id = call.from_user.id
     username = call.from_user.username or call.from_user.first_name or "User"
     
-    # Load user data
+    # Load user data and auto-register if needed
     user_obj = ExoUser(user_id, username)
     user_data = user_obj.load_data()
     
     if not user_data:
-        telegram_bot.answer_callback_query(call.id, "🚫 Please register first using /start!")
-        return
+        # Auto-register the user
+        user_obj.register()
+        user_data = user_obj.load_data()
     
     # Get saved accounts from user data
     saved_accounts = user_obj.get_saved_accounts()
     
     if not saved_accounts:
-        telegram_bot.answer_callback_query(call.id, "📁 No saved accounts found!")
+        # Instead of using answer_callback_query, edit the message
+        telegram_bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="📁 **Saved Accounts**\n\nYou don't have any saved accounts yet. Use the Connect Account button to add one.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_welcome")]]),
+            parse_mode="Markdown"
+        )
         return
     
     # Sort by last used date (newest first)
@@ -364,22 +447,9 @@ def show_saved_accounts(call):
     )
 
 def show_items_shop(call):
-    """Show Fortnite items shop information"""
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛍️ Today's Shop", callback_data="shop_today")],
-        [InlineKeyboardButton("⭐ Featured Items", callback_data="shop_featured")],
-        [InlineKeyboardButton("🔄 Daily Items", callback_data="shop_daily")],
-        [InlineKeyboardButton("🎁 Special Offers", callback_data="shop_special")],
-        [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_welcome")]
-    ])
-    
-    telegram_bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text="🛍️ **Fortnite Items Shop**\n\n🎮 Browse the latest items available in Fortnite!\n\n⚠️ *Note: This feature shows shop information only. No purchasing functionality.*",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
+    """Show Fortnite items shop information using the new Fortnite API integration"""
+    # Use the new command_shop function instead
+    asyncio.run(command_shop(telegram_bot, call.message))
 
 @telegram_bot.callback_query_handler(func=lambda call: call.data.startswith("saved_account_"))
 def handle_saved_account_selection(call):
@@ -425,9 +495,8 @@ def handle_saved_account_selection(call):
     
     # Create action buttons for this account
     markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍 Check Account", callback_data=f"quick_check_{account_id}")],
-        [InlineKeyboardButton("📊 View Stats", callback_data=f"quick_stats_{account_id}")],
-        [InlineKeyboardButton("🎨 Generate Image", callback_data=f"quick_image_{account_id}")],
+        [InlineKeyboardButton("🌐 Web Login", callback_data=f"web_login_{account_id}")],
+        [InlineKeyboardButton("🔄 Recheck Account", callback_data=f"quick_check_{account_id}")],
         [InlineKeyboardButton("🗑️ Remove Account", callback_data=f"remove_account_{account_id}")],
         [InlineKeyboardButton("🔙 Back to Accounts", callback_data="welcome_saved")]
     ])
@@ -449,6 +518,41 @@ def handle_saved_account_selection(call):
         message_id=call.message.message_id,
         text=f"👤 **{display_name}**\n\n📧 Email: {email}\n📅 Saved: {saved_at}\n\n🚀 What would you like to do with this account?",
         reply_markup=markup,
+        parse_mode="Markdown"
+    )
+
+@telegram_bot.callback_query_handler(func=lambda call: call.data.startswith("web_login_"))
+def handle_web_login(call):
+    """Handle web login for saved account"""
+    from user import ExoUser
+    
+    user_id = call.from_user.id
+    username = call.from_user.username or call.from_user.first_name or "User"
+    account_id = call.data.replace("web_login_", "")
+    
+    # Load user data
+    user_obj = ExoUser(user_id, username)
+    saved_account = user_obj.get_saved_account(account_id)
+    
+    if not saved_account:
+        telegram_bot.answer_callback_query(call.id, "🚫 Account not found!")
+        return
+    
+    # Get account details
+    display_name = saved_account['display_name']
+    
+    # Send web login instructions
+    telegram_bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=f"🌐 **Web Login for {display_name}**\n\n"
+             f"To login to this account on the Epic Games website:\n\n"
+             f"1. Go to https://www.epicgames.com/id/login\n"
+             f"2. Use the saved credentials for this account\n\n"
+             f"⚠️ For security reasons, we don't store or display your password.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Back to Account", callback_data=f"saved_account_{account_id}")]
+        ]),
         parse_mode="Markdown"
     )
 
@@ -719,7 +823,31 @@ def handle_shop_navigation(call):
         parse_mode="Markdown"
     )
 
-@telegram_bot.callback_query_handler(func=lambda call: call.data == "back_to_welcome")
+@telegram_bot.callback_query_handler(func=lambda call: call.data.startswith("settings_"))
+def handle_settings_menu(call):
+    """Handle settings menu callbacks"""
+    data = call.data
+    
+    if data == "settings_style":
+        # Show style settings
+        asyncio.run(send_style_message(telegram_bot, call.message))
+    elif data == "settings_badges":
+        # Show badges settings
+        asyncio.run(send_badges_message(telegram_bot, call.message))
+    elif data == "settings_design":
+        # Show design settings
+        asyncio.run(command_design(telegram_bot, call.message))
+    elif data == "settings_user":
+        # Show user info
+        asyncio.run(command_user(telegram_bot, call.message))
+    elif data == "settings_delete":
+        # Show delete accounts menu
+        asyncio.run(command_delete_accounts(telegram_bot, call.message))
+    elif data == "settings_clear":
+        # Show clear friends menu
+        asyncio.run(command_clear(telegram_bot, call.message))
+
+@telegram_bot.callback_query_handler(func=lambda call: call.data == "back_to_welcome" or call.data == "back_to_menu")
 def handle_back_to_welcome(call):
     """Handle back to welcome menu"""
     # Recreate the welcome menu
