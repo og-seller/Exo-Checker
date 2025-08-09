@@ -60,42 +60,18 @@ locker_categories = ['AthenaCharacter', 'AthenaBackpack', 'AthenaPickaxe', 'Athe
 
 def command_start(bot, message):
     if message.chat.type != "private":
+        bot.reply_to(message, "⚠️ This command can only be used in private chats for security reasons.", parse_mode="Markdown")
         return
     
     user = ExoUser(message.from_user.id, message.from_user.username)
-    user_data = user.register()
-    if not user_data:
-        bot.reply_to(message, "✅ **Already Registered**\n\nYou have already setup your account! Use /help to see available commands.", parse_mode="Markdown")
-        return
+    user_data = user.load_data()
+    is_new_user = not user_data
     
-    bot.reply_to(message, f'''
-🎮 **What is Exo-Checker Bot?**
-> Exo-Checker is a secure telegram fortnite skin checker bot that visualizes your locker into an image and displays account information.
-
-🔒 **Security & Privacy:**
-> We do NOT store your account information anywhere. All account credentials are private and inaccessible for security reasons.
-
-📋 **Commands:**
-🚀 /start - Register to Exo-Checker
-❓ /help - Display bot information and commands
-🔐 /login - Skincheck your Epic Games Fortnite account
-📋 /menu - Access settings menu
-🔑 /code - Alternative code login method
-🎒 /locker - View specific locker categories
-🎨 /style - Choose your skincheck style
-🏆 /badges - Toggle your achieved badges
-📊 /stats - View your account statistics
-⚙️ /custom - Personalization menu
-🧹 /clear - Clear your account's friend list
-👤 /user - Toggle user display settings
-🖼️ /logo - Change your custom logo
-🎭 /design - Design choice settings
-📝 /title - Title settings
-📍 /locate - Location lookup by Xbox nickname
-💬 /livechat - Live chat status
-''', parse_mode="Markdown")
-
-    # Create welcome menu with buttons
+    # Auto-register if needed
+    if is_new_user:
+        user.register()
+    
+    # Create welcome menu
     markup = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Connect Account ⚡", callback_data="welcome_connect"),
@@ -107,13 +83,37 @@ def command_start(bot, message):
         ],
         [InlineKeyboardButton("📞 Contact Developer", url="https://t.me/ogsellz")]
     ])
+    
+    if is_new_user:
+        # New user welcome message
+        bot.send_message(
+            message.chat.id,
+            f'''
+👋 **Welcome to Exo-Checker Bot!**
 
-    bot.send_message(
-        chat_id=message.chat.id,
-        text="👋 **Welcome to the Exo-Checker Bot!**\n\n📰 **Our News channel** - t.me/ExoChecker\n\nBy using the bot, you automatically agree to the user agreement.",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
+🎮 **What is Exo-Checker Bot?**
+> Exo-Checker is a secure telegram fortnite skin checker bot that visualizes your locker into an image and displays account information.
+
+🔒 **Security & Privacy:**
+> We do NOT store your account information anywhere. All account credentials are private and inaccessible for security reasons.
+
+📰 **Our News channel** - t.me/ExoChecker
+
+Choose an option from the menu below:
+''',
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+    else:
+        # Returning user welcome message
+        bot.send_message(
+            message.chat.id,
+            "👋 **Welcome back to Exo-Checker!**\n\n"
+            "📰 **Our News channel** - t.me/ExoChecker\n\n"
+            "Choose an option from the menu below:",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
     
 def command_help(bot, message):
     bot.reply_to(message, f'''
@@ -141,6 +141,7 @@ def command_help(bot, message):
 🎒 /locker - View specific locker categories
 🚀 /rocket - Rocket League checker (coming soon)
 📍 /locate - Location lookup by Xbox nickname
+💬 /livechat - Check Epic Games live chat status
 
 🎨 **Customization:**
 🎨 /style - Choose your skincheck style
@@ -148,10 +149,13 @@ def command_help(bot, message):
 🎭 /design - Design choice settings
 🖼️ /logo - Change your custom logo
 📝 /title - Title settings
+🏆 /badges - Toggle your owned badges
 
-👤 **Account Management:**
-🏆 /badges - Toggle your achieved badges
-📊 /stats - View your account statistics
+📊 **Stats & Information:**
+📊 /stats - View your checker stats
+🛍️ /shop - View current Fortnite item shop
+📰 /news - View latest Fortnite news
+🔍 /cosmetics - Search for Fortnite cosmetics
 👤 /user - Toggle user display settings
 💬 /livechat - Live chat status
 
@@ -171,47 +175,131 @@ def command_help(bot, message):
     )
     
 async def command_login(bot, message):
+    """Handle Epic Games login process"""
     if message.chat.type != "private":
+        bot.reply_to(message, "⚠️ This command can only be used in private chats for security reasons.", parse_mode="Markdown")
         return
     
+    # Auto-register user if needed
     user = ExoUser(message.from_user.id, message.from_user.username)
     user_data = user.load_data()
     if user_data == {}:
-        bot.reply_to(message, "🚫 You haven't setup your user yet, please use /start before logging in!", parse_mode="Markdown")
-        return
+        user.register()
+        user_data = user.load_data()
     
-    msg = bot.reply_to(message, "⏳ **Creating authorization login link...**", parse_mode="Markdown")
-    epic_generator = EpicGenerator()
-    await epic_generator.start()
-    device_data = await epic_generator.create_device_code()
-    epic_games_auth_link = f"https://www.epicgames.com/activate?userCode={device_data['user_code']}"
-
-    # login link message(embed link button)
-    markup = InlineKeyboardMarkup()
-    button = InlineKeyboardButton("🔗 Login", url=epic_games_auth_link)
-    markup.add(button)
-    bot.edit_message_text(
-        chat_id=msg.chat.id,
-        message_id=msg.message_id,
-        text=f"🔐 **Epic Games Login**\n\nOpen [this link](<{epic_games_auth_link}>) to log in to your account.", 
-        reply_markup=markup,
-        parse_mode="Markdown")
+    # Send initial message
+    msg = bot.reply_to(message, "⏳ **Creating Epic Games Login Link...**\n\nPlease wait while we connect to Epic Games servers...", parse_mode="Markdown")
     
-    epic_user = await epic_generator.wait_for_device_code_completion(bot, message, code=device_data['device_code'])
-    if not epic_user:
-        # something went wrong so we can't check the account
-        await epic_generator.kill()
-        return
-    
-    account_data = await epic_generator.get_account_metadata(epic_user)
-   
-    accountID = account_data.get('id', "INVALID_ACCOUNT_ID")
-    if (accountID == "INVALID_ACCOUNT_ID"):
-        bot.edit_message_text(chat_id=msg.chat.id, message_id=msg.message_id, text="Invalid account(banned or fortnite has not been launched).")
-        return
-    
-    bot.delete_message(msg.chat.id, msg.message_id)
-    msg = bot.send_message(message.chat.id, f'✅ **Successfully logged in account:** {account_data.get("displayName", "HIDDEN_ID_ACCOUNT")}', parse_mode="Markdown")
+    try:
+        # Initialize Epic Games API
+        epic_generator = EpicGenerator()
+        await epic_generator.start()
+        
+        # Create device code for authentication
+        try:
+            device_data = await epic_generator.create_device_code()
+            user_code = device_data.get('user_code')
+            
+            if not user_code:
+                bot.edit_message_text(
+                    chat_id=msg.chat.id,
+                    message_id=msg.message_id,
+                    text="❌ **Error**\n\nFailed to generate login link. Please try again later.",
+                    parse_mode="Markdown"
+                )
+                await epic_generator.kill()
+                return
+        except Exception as e:
+            bot.edit_message_text(
+                chat_id=msg.chat.id,
+                message_id=msg.message_id,
+                text=f"❌ **Error**\n\nFailed to generate login link: {str(e)}. Please try again later.",
+                parse_mode="Markdown"
+            )
+            await epic_generator.kill()
+            return
+        
+        # Create Epic Games authentication link
+        epic_games_auth_link = f"https://www.epicgames.com/activate?userCode={user_code}"
+        verification_uri = device_data.get('verification_uri_complete', epic_games_auth_link)
+        
+        # Create login button
+        markup = InlineKeyboardMarkup()
+        button = InlineKeyboardButton("🔗 Login to Epic Games", url=verification_uri)
+        markup.add(button)
+        
+        # Update message with login instructions
+        bot.edit_message_text(
+            chat_id=msg.chat.id,
+            message_id=msg.message_id,
+            text=(
+                f"🔐 **Epic Games Login**\n\n"
+                f"1️⃣ Click the button below to open Epic Games login\n"
+                f"2️⃣ Enter code: `{user_code}` (or it will be pre-filled)\n"
+                f"3️⃣ Login with your Epic Games account\n"
+                f"4️⃣ Authorize the connection\n\n"
+                f"⏳ Waiting for you to complete the login process...\n"
+                f"⏱️ This link will expire in 5 minutes"
+            ),
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+        
+        # Wait for user to complete authentication
+        epic_user = await epic_generator.wait_for_device_code_completion(bot, message, code=device_data['device_code'])
+        if not epic_user:
+            # Authentication failed or timed out
+            await epic_generator.kill()
+            return
+        
+        # Get account metadata
+        bot.edit_message_text(
+            chat_id=msg.chat.id,
+            message_id=msg.message_id,
+            text="✅ **Login Successful!**\n\nRetrieving your account information...",
+            parse_mode="Markdown"
+        )
+        
+        account_data = await epic_generator.get_account_metadata(epic_user)
+        
+        # Validate account
+        account_id = account_data.get('id', "INVALID_ACCOUNT_ID")
+        display_name = account_data.get("displayName", "Unknown")
+        
+        if account_id == "INVALID_ACCOUNT_ID":
+            bot.edit_message_text(
+                chat_id=msg.chat.id,
+                message_id=msg.message_id,
+                text="❌ **Invalid Account**\n\nThis account may be banned or has never played Fortnite.",
+                parse_mode="Markdown"
+            )
+            await epic_generator.kill()
+            return
+        
+        # Success message
+        bot.delete_message(msg.chat.id, msg.message_id)
+        msg = bot.send_message(
+            message.chat.id, 
+            f'✅ **Successfully Connected!**\n\n'
+            f'👤 **Account:** {display_name}\n'
+            f'🆔 **ID:** {account_id}\n\n'
+            f'Use /locker to view your Fortnite items!',
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        # Handle any unexpected errors
+        print(f"Error in login process: {str(e)}")
+        bot.edit_message_text(
+            chat_id=msg.chat.id,
+            message_id=msg.message_id,
+            text=f"❌ **Error**\n\nAn unexpected error occurred during login: {str(e)}\n\nPlease try again later.",
+            parse_mode="Markdown"
+        )
+        
+        # Make sure to clean up
+        if 'epic_generator' in locals():
+            await epic_generator.kill()
     
     # Save account credentials for future use
     import datetime
@@ -805,29 +893,36 @@ def send_badges_message(bot, chat_id, badge_index, user_data):
 # New commands implementation
 
 async def command_menu(bot, message):
-    """Settings menu command"""
+    """Main menu command"""
     if message.chat.type != "private":
+        bot.reply_to(message, "⚠️ This command can only be used in private chats for security reasons.", parse_mode="Markdown")
         return
     
+    # Auto-register user if needed
     user = ExoUser(message.from_user.id, message.from_user.username)
     user_data = user.load_data()
     if not user_data:
-        bot.reply_to(message, "You haven't setup your user yet, please use /start before accessing the menu!")
-        return
+        user.register()
+        user_data = user.load_data()
     
+    # Create welcome menu
     markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎨 Style Settings", callback_data="menu_style")],
-        [InlineKeyboardButton("🏆 Badge Settings", callback_data="menu_badges")],
-        [InlineKeyboardButton("🖼️ Logo Settings", callback_data="menu_logo")],
-        [InlineKeyboardButton("🎨 Design Settings", callback_data="menu_design")],
-        [InlineKeyboardButton("🔧 Title Settings", callback_data="menu_title")],
-        [InlineKeyboardButton("👤 User Settings", callback_data="menu_user")],
-        [InlineKeyboardButton("📊 Statistics", callback_data="menu_stats")]
+        [
+            InlineKeyboardButton("Connect Account ⚡", callback_data="welcome_connect"),
+            InlineKeyboardButton("Saved Accounts 📁", callback_data="welcome_saved")
+        ],
+        [
+            InlineKeyboardButton("Items Shop 🛍️", callback_data="welcome_shop"),
+            InlineKeyboardButton("Settings ⚙️", callback_data="welcome_settings")
+        ],
+        [InlineKeyboardButton("📞 Contact Developer", url="https://t.me/ogsellz")]
     ])
     
     bot.send_message(
         message.chat.id,
-        "⚙️ **Settings Menu**\n\nChoose what you want to configure:",
+        "👋 **Welcome to Exo-Checker!**\n\n"
+        "📰 **Our News channel** - t.me/ExoChecker\n\n"
+        "Choose an option from the menu below:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
@@ -1174,21 +1269,116 @@ async def command_locate(bot, message):
         return
     
     # Extract Xbox gamertag from message if provided
-    locate_parts = message.text.split()
-    if len(locate_parts) > 1:
-        xbox_nick = locate_parts[1]
-        msg = bot.reply_to(message, f"🌍 Searching for Xbox player: `{xbox_nick}`...")
+    command_text = message.text.strip()
+    if len(command_text) > 8:  # "/locate " is 8 characters
+        # Get everything after "/locate " to support gamertags with spaces
+        xbox_nick = command_text[8:].strip()
+        msg = bot.reply_to(message, f"🌍 Searching for Xbox player: `{xbox_nick}`...", parse_mode="Markdown")
         
-        # This would require Xbox Live API integration
-        # For now, show a placeholder message
-        bot.edit_message_text(
-            chat_id=msg.chat.id,
-            message_id=msg.message_id,
-            text=f"🌍 **Location Lookup**\n\nSearching for Xbox player: `{xbox_nick}`\n\n⚠️ This feature requires Xbox Live API integration and is currently under development.",
-            parse_mode="Markdown"
-        )
+        try:
+            # Import the Xbox API wrapper
+            from xbox_api_wrapper import XboxLiveAPIWrapper
+            
+            # Create an instance of the Xbox API wrapper
+            xbox_api = XboxLiveAPIWrapper()
+            await xbox_api.initialize()
+            
+            # Get player profile
+            profile_data = await xbox_api.get_profile(xbox_nick)
+            
+            if "error" in profile_data:
+                # Player not found or error occurred
+                response_text = (
+                    f"❌ **Player Not Found**\n\n"
+                    f"Could not find Xbox player: `{xbox_nick}`\n\n"
+                    f"Error: {profile_data.get('error', 'Unknown error')}"
+                )
+                bot.edit_message_text(
+                    chat_id=msg.chat.id,
+                    message_id=msg.message_id,
+                    text=response_text,
+                    parse_mode="Markdown"
+                )
+                return
+                
+            # Extract XUID and other profile information
+            xuid = profile_data.get("id", "")
+            gamertag = profile_data.get("gamertag", xbox_nick)
+            
+            # Extract location from settings
+            location = "Unknown"
+            settings = profile_data.get("settings", [])
+            location_setting = next((setting for setting in settings if setting.get("id") == "Location"), None)
+            if location_setting:
+                location = location_setting.get("value", "Unknown")
+                
+            # Extract gamerscore from settings
+            gamerscore = "Unknown"
+            gamerscore_setting = next((setting for setting in settings if setting.get("id") == "Gamerscore"), None)
+            if gamerscore_setting:
+                gamerscore = gamerscore_setting.get("value", "Unknown")
+                
+            # Get presence information if XUID is available
+            online_status = "Offline"
+            current_game = "None"
+            if xuid:
+                try:
+                    presence_data = await xbox_api.get_presence(xuid)
+                    if presence_data and not "error" in presence_data:
+                        if "presenceDetails" in presence_data and len(presence_data["presenceDetails"]) > 0:
+                            presence_detail = presence_data["presenceDetails"][0]
+                            online_status = "Online" if presence_detail.get("isOnline", False) else "Offline"
+                            current_game = presence_detail.get("titleName", "None")
+                except Exception as e:
+                    print(f"Error getting presence: {str(e)}")
+            
+            # Create a detailed response message
+            response_text = (
+                f"🌍 **Xbox Player Found**\n\n"
+                f"👤 **Gamertag**: `{gamertag}`\n"
+                f"📍 **Location**: `{location}`\n"
+                f"🏆 **Gamerscore**: `{gamerscore}`\n"
+                f"🟢 **Status**: `{online_status}`\n"
+            )
+            
+            if current_game != "None":
+                response_text += f"🎮 **Current Game**: `{current_game}`\n"
+                
+            # Add XUID if available
+            if xuid:
+                response_text += f"\n🆔 **XUID**: `{xuid}`\n"
+                
+            response_text += f"\nℹ️ Use this information responsibly and respect privacy."
+            
+            # Update the message with the response
+            bot.edit_message_text(
+                chat_id=msg.chat.id,
+                message_id=msg.message_id,
+                text=response_text,
+                parse_mode="Markdown"
+            )
+            
+            # Close the API session
+            await xbox_api.close()
+            
+        except ImportError:
+            # Module not found
+            bot.edit_message_text(
+                chat_id=msg.chat.id,
+                message_id=msg.message_id,
+                text=f"❌ **Error**\n\nXbox Live API module not found. Please make sure it's installed correctly.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            # General error
+            bot.edit_message_text(
+                chat_id=msg.chat.id,
+                message_id=msg.message_id,
+                text=f"❌ **Error**\n\nAn error occurred while searching for Xbox player: `{xbox_nick}`\n\nError: {str(e)}",
+                parse_mode="Markdown"
+            )
     else:
-        bot.reply_to(message, "🌍 **Location by Xbox Nick**\n\nUsage: `/locate XBOX_GAMERTAG`\n\nExample: `/locate ProGamer123`", parse_mode="Markdown")
+        bot.reply_to(message, "🌍 **Location by Xbox Nick**\n\nUsage: `/locate XBOX_GAMERTAG`\n\nExample: `/locate ProGamer123` or `/locate Pro Gamer 123`", parse_mode="Markdown")
 
 async def command_livechat(bot, message):
     """Check Epic Games live chat status"""
