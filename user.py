@@ -97,6 +97,36 @@ class ExoUser:
         # Add new account
         self.user_data['saved_accounts'].append(account_data)
         self.update_data()
+        
+    def save_account_credentials(self, account_id: str, credentials: dict):
+        """
+        Save account credentials (email, password, tokens) for auto-login
+        
+        Args:
+            account_id: The Epic Games account ID
+            credentials: Dictionary containing credentials (email, password, tokens)
+        """
+        if 'account_credentials' not in self.user_data:
+            self.user_data['account_credentials'] = {}
+            
+        # Save credentials for this account ID
+        self.user_data['account_credentials'][account_id] = credentials
+        self.update_data()
+        
+    def get_account_credentials(self, account_id: str) -> dict:
+        """
+        Get saved account credentials
+        
+        Args:
+            account_id: The Epic Games account ID
+            
+        Returns:
+            Dictionary containing credentials or empty dict if not found
+        """
+        if 'account_credentials' not in self.user_data:
+            return {}
+            
+        return self.user_data['account_credentials'].get(account_id, {})
     
     def get_saved_accounts(self) -> list:
         """Get all saved accounts for the user"""

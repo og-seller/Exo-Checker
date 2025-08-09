@@ -49,6 +49,111 @@ class FortniteAPIWrapper:
             print(f"Error initializing Fortnite API: {e}")
             raise
     
+    async def get_player_locker(self, account_id: str) -> Dict[str, Any]:
+        """
+        Get a player's locker (cosmetics owned)
+        
+        Args:
+            account_id: The Epic Games account ID
+            
+        Returns:
+            Dictionary containing the player's locker information
+        """
+        try:
+            client = await self.initialize()
+            
+            # Get the player's locker data
+            locker_data = await client.fetch_br_cosmetics_list(account_id)
+            
+            result = {
+                "account_id": account_id,
+                "categories": {},
+                "total_items": 0,
+                "rare_items": 0
+            }
+            
+            # Process cosmetic categories
+            categories = {}
+            rare_count = 0
+            total_count = 0
+            
+            # Process all cosmetics
+            for item in locker_data:
+                # Skip items without proper data
+                if not hasattr(item, 'id') or not hasattr(item, 'type') or not hasattr(item, 'rarity'):
+                    continue
+                
+                item_type = item.type.value if hasattr(item.type, 'value') else str(item.type)
+                item_rarity = item.rarity.value if hasattr(item.rarity, 'value') else str(item.rarity)
+                
+                # Initialize category if it doesn't exist
+                if item_type not in categories:
+                    categories[item_type] = {
+                        "count": 0,
+                        "rare_count": 0,
+                        "items": []
+                    }
+                
+                # Add item to category
+                categories[item_type]["count"] += 1
+                total_count += 1
+                
+                # Check if item is rare (Legendary or Epic)
+                is_rare = item_rarity in ["legendary", "epic", "exclusive"]
+                if is_rare:
+                    categories[item_type]["rare_count"] += 1
+                    rare_count += 1
+                
+                # Add item details
+                categories[item_type]["items"].append({
+                    "id": item.id,
+                    "name": item.name,
+                    "rarity": item_rarity,
+                    "is_rare": is_rare,
+                    "image": item.images.icon if hasattr(item, 'images') and hasattr(item.images, 'icon') else None
+                })
+            
+            # Update result
+            result["categories"] = categories
+            result["total_items"] = total_count
+            result["rare_items"] = rare_count
+            
+            return result
+        except Exception as e:
+            print(f"Error fetching player locker: {e}")
+            return {"error": str(e)}
+    
+    async def search_player(self, username: str, platform: str = "epic") -> Dict[str, Any]:
+        """
+        Search for a player by username and platform
+        
+        Args:
+            username: The player's username
+            platform: The platform (epic, xbl, psn)
+            
+        Returns:
+            Dictionary containing the player's account information
+        """
+        try:
+            client = await self.initialize()
+            
+            # Search for the player
+            player_data = await client.fetch_player_by_name(username, platform)
+            
+            if not player_data:
+                return {"error": "Player not found"}
+            
+            result = {
+                "account_id": player_data.account_id,
+                "display_name": player_data.name,
+                "platform": platform
+            }
+            
+            return result
+        except Exception as e:
+            print(f"Error searching player: {e}")
+            return {"error": str(e)}
+    
     async def close(self):
         """Close the Fortnite API client and session"""
         if self.client:

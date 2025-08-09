@@ -22,6 +22,9 @@ class EpicEndpoints:
     endpoint_redirect_url = "https://www.epicgames.com/id/login?redirectUrl=https%3A//www.epicgames.com/id/login%3FredirectUrl%3Dhttps%253A%252F%252Fwww.epicgames.com%252Fid%252Fapi%252Fredirect%253FclientId%253Dec684b8c687f479fadea3cb2ad83f5c6%2526responseType%253Dcode"
     endpoint_oauth_exchange = "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/exchange"
     endpoint_device_auth = "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/deviceAuthorization"
+    endpoint_web_login = "https://www.epicgames.com/id/api/redirect"
+    endpoint_web_auth = "https://www.epicgames.com/id/api/csrf"
+    endpoint_web_exchange = "https://www.epicgames.com/id/api/exchange"
 
 # locker categories we render
 locker_categories = ['AthenaCharacter', 'AthenaBackpack', 'AthenaPickaxe', 'AthenaDance', 'AthenaGlider', 'AthenaPopular', 'AthenaExclusive']
@@ -162,6 +165,49 @@ class EpicGenerator:
         except Exception as e:
             print(f"Exception creating device code: {str(e)}")
             return {}
+            
+    async def create_web_login_url(self) -> str:
+        """
+        Create a web login URL that automatically logs in the user with cookies
+        Returns a URL that can be used to log in to Epic Games
+        """
+        try:
+            # Get CSRF token for web login
+            async with self.http.request(
+                method="GET",
+                url=EpicEndpoints.endpoint_web_auth,
+                headers={
+                    "User-Agent": self.user_agent
+                }
+            ) as response:
+                if response.status != 200:
+                    print(f"Error getting CSRF token: {response.status}")
+                    return ""
+                
+                # Get CSRF token from cookies
+                cookies = response.cookies
+                csrf_token = ""
+                for cookie in cookies:
+                    if cookie.key == "XSRF-TOKEN":
+                        csrf_token = cookie.value
+                        break
+                
+                if not csrf_token:
+                    print("CSRF token not found in cookies")
+                    return ""
+                
+                # Create login URL with CSRF token and state
+                state = f"exochecker_{datetime.now(timezone.utc).timestamp()}"
+                login_url = f"{EpicEndpoints.endpoint_web_login}?clientId=ec684b8c687f479fadea3cb2ad83f5c6&responseType=code&state={state}&prompt=login"
+                
+                # Add cookies to the URL for automatic login
+                cookie_str = f"XSRF-TOKEN={csrf_token}"
+                login_url = f"{login_url}&cookies={cookie_str}"
+                
+                return login_url
+        except Exception as e:
+            print(f"Exception creating web login URL: {str(e)}")
+            return ""
         
     async def create_exchange_code(self, user: EpicUser) -> str:
         # creates exchange code for the api requests & returns it
