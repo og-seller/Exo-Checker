@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+test_*.py
+node_modules/
+package.json
+package-lock.json

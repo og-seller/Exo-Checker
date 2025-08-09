@@ -11,9 +11,10 @@ from cosmetic import FortniteCosmetic
 from utils import bool_to_emoji
 
 # these tokens are used to authorize in epic games's API and let us do the skincheck without getting errors
-EPIC_API_SWITCH_TOKEN = "OThmN2U0MmMyZTNhNGY4NmE3NGViNDNmYmI0MWVkMzk6MGEyNDQ5YTItMDAxYS00NTFlLWFmZWMtM2U4MTI5MDFjNGQ3"
+# Original tokens that work with the device code generation
+EPIC_API_SWITCH_TOKEN = "MzRhMDJjZjhmNDQxNGUyOWIxNTkyMTg3NmRhMzZmOWE6ZGFhZmJjY2M3Mzc3NDUwMzlkZmZlNTNkOTRmYzc2Y2Y="
 # keep in mind, sometimes epic games block the client ids, so then you have to generate new ios token for it to start working again
-EPIC_API_IOS_CLIENT_TOKEN = "M2Y2OWU1NmM3NjQ5NDkyYzhjYzI5ZjFhZjA4YThhMTI6YjUxZWU5Y2IxMjIzNGY1MGE2OWVmYTY3ZWY1MzgxMmU="
+EPIC_API_IOS_CLIENT_TOKEN = "MzQ0NmNkNjI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE="
 
 class EpicEndpoints:
     endpoint_oauth_token = "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token"
@@ -111,32 +112,56 @@ class EpicGenerator:
     async def get_access_token(self) -> str:
         # getting the access token from epic's api(REQUIRES usage of EPIC_API_SWITCH_TOKEN as Authorization in headers for it to work)
         # if it's not getting any data, it means the EPIC_API_SWITCH_TOKEN is expired, you must find new one :D
-        async with self.http.request(
-            method="POST",
-            url=EpicEndpoints.endpoint_oauth_token,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Authorization": f"basic {EPIC_API_SWITCH_TOKEN}"
-            },
-            data={ "grant_type": "client_credentials" },
-        ) as response:
-            data = await response.json()
-            return data["access_token"]
+        try:
+            async with self.http.request(
+                method="POST",
+                url=EpicEndpoints.endpoint_oauth_token,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Authorization": f"basic {EPIC_API_SWITCH_TOKEN}"
+                },
+                data={ "grant_type": "client_credentials" },
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    print(f"Error getting access token: {response.status}")
+                    print(f"Error response: {error_text}")
+                    raise Exception(f"Failed to get access token: {response.status}")
+                
+                data = await response.json()
+                return data["access_token"]
+        except Exception as e:
+            print(f"Exception getting access token: {str(e)}")
+            raise
         
-    async def create_device_code(self) -> tuple:
-        # devide code is used on the link the checker bot sends u "active?userCode=SOMETHING" something like this
-        # REQUIRES usage of self.access_token, which we got from get_access_token function, as Authorization in headers
-        # returns the device code, used in the link we generate for the user to login
-        async with self.http.request(
-            method="POST",
-            url=EpicEndpoints.endpoint_device_auth,
-            headers={
-                "Authorization": f"bearer {self.access_token}",
-                "Content-Type": "application/x-www-form-urlencoded"
-            }
-        ) as response:
-            data = await response.json()
-            return data
+    async def create_device_code(self) -> dict:
+        """
+        Create a device code for Epic Games authentication
+        Returns a dictionary with device_code, user_code, verification_uri, etc.
+        """
+        try:
+            # Use the access token we obtained from get_access_token
+            # This is the correct way to generate device codes according to Epic's API
+            async with self.http.request(
+                method="POST",
+                url=EpicEndpoints.endpoint_device_auth,
+                headers={
+                    "Authorization": f"bearer {self.access_token}",
+                    "Content-Type": "application/x-www-form-urlencoded"
+                }
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    print(f"Error creating device code: {response.status}")
+                    print(f"Error response: {error_text}")
+                    return {}
+                
+                data = await response.json()
+                print(f"Successfully created device code: {data.get('user_code')}")
+                return data
+        except Exception as e:
+            print(f"Exception creating device code: {str(e)}")
+            return {}
         
     async def create_exchange_code(self, user: EpicUser) -> str:
         # creates exchange code for the api requests & returns it
@@ -150,7 +175,12 @@ class EpicGenerator:
             return data["code"]
         
     async def wait_for_device_code_completion(self, bot, message, code: str) -> Optional[EpicUser]:
-        while True:
+        # Maximum wait time: 5 minutes (30 attempts with 10 second intervals)
+        max_attempts = 30
+        attempts = 0
+        
+        while attempts < max_attempts:
+            attempts += 1
             try:
                 async with self.http.request(
                     method="POST",
@@ -165,32 +195,52 @@ class EpicGenerator:
                     token_data = await request.json()
 
                     if request.status == 200 and "access_token" in token_data:
+                        print("Successfully authenticated with Epic Games")
                         break
 
                     # Handle specific API errors
                     error_code = token_data.get("errorCode")
                     if error_code == "errors.com.epicgames.account.oauth.authorization_pending":
-                        pass
-                    
-                    elif error_code == "g":
-                        pass
+                        # This is normal - user hasn't completed auth yet
+                        if attempts % 3 == 0:  # Every 30 seconds
+                            print(f"Waiting for user to complete authentication... ({attempts}/{max_attempts})")
                     
                     elif error_code == "errors.com.epicgames.not_found":
-                        bot.send_message(message.chat.id, f'❌ Login link expired, please use /login again.')
+                        bot.send_message(message.chat.id, f'❌ **Login Link Expired**\n\nThe login link has expired. Please use /login again to generate a new link.', parse_mode="Markdown")
                         return None
+                    
+                    elif error_code == "errors.com.epicgames.account.oauth.authorization_expired":
+                        bot.send_message(message.chat.id, f'❌ **Login Timed Out**\n\nThe login process timed out. Please use /login again to generate a new link.', parse_mode="Markdown")
+                        return None
+                        
                     else:
-                        bot.send_message(message.chat.id, f'❌ Error occurred: {token_data.get("errorMessage", "Unknown error")}')
+                        error_message = token_data.get("errorMessage", "Unknown error")
+                        print(f"Epic Games API error: {error_code} - {error_message}")
+                        bot.send_message(message.chat.id, f'❌ **Epic Games Error**\n\nError: {error_message}\n\nPlease try again later or contact support.', parse_mode="Markdown")
                         return None
 
+                # Wait 10 seconds before checking again
                 await asyncio.sleep(10)
+                
+            except aiohttp.ClientError as ce:
+                print(f"Network error with Epic Games API: {ce}")
+                bot.send_message(message.chat.id, f'❌ **Connection Error**\n\nCould not connect to Epic Games servers. Please check your internet connection and try again.', parse_mode="Markdown")
+                return None
+                
             except ValueError as ve:
-                print(f"Error with waiting for device code: {ve}")
-                bot.send_message(message.chat.id, f'❌ An unexpected error occurred, please try again later.')
+                print(f"Error parsing Epic Games API response: {ve}")
+                bot.send_message(message.chat.id, f'❌ **Unexpected Error**\n\nAn error occurred while processing the response from Epic Games. Please try again later.', parse_mode="Markdown")
                 return None
+                
             except Exception as e:
-                print(f"Unhandled exception: {e}")
-                bot.send_message(message.chat.id, f'❌ An error occurred, please contact support.')
+                print(f"Unhandled exception during Epic Games authentication: {e}")
+                bot.send_message(message.chat.id, f'❌ **System Error**\n\nAn unexpected error occurred. Please contact support with the following information:\n\nError: {str(e)}', parse_mode="Markdown")
                 return None
+        
+        # Check if we exceeded max attempts
+        if attempts >= max_attempts:
+            bot.send_message(message.chat.id, f'❌ **Login Timed Out**\n\nYou did not complete the login process in time. Please use /login again to generate a new link.', parse_mode="Markdown")
+            return None
 
         try:
             async with self.http.request(
